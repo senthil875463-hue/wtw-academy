@@ -1,0 +1,6 @@
+Flask
+gunicorn
+openpyxl
+qrcode
+Pillow
+psycopg2-binary
