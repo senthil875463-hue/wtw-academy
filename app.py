@@ -5532,6 +5532,10 @@ def student_take(attempt_id):
         duration_seconds - elapsed
     )
 
+    total_questions = len(questions)
+    progress_number = qindex + 1
+    progress_percent = int(round((progress_number / total_questions) * 100)) if total_questions else 0
+
     options = [
         ("A", question["option_a"]),
         ("B", question["option_b"]),
@@ -5540,7 +5544,33 @@ def student_take(attempt_id):
     ]
 
     body = """
+    <style>
+        .exam-progress-wrap { margin:12px 0; }
+        .exam-progress-top { display:flex; justify-content:space-between; font-weight:700; margin-bottom:6px; }
+        .exam-progress-bar { width:100%; height:10px; background:#e5e7eb; border-radius:999px; overflow:hidden; }
+        .exam-progress-fill { height:100%; width:{{ progress_percent }}%; background:#16a34a; border-radius:999px; transition:width .25s ease; }
+        #timer { min-width:105px; text-align:center; display:inline-block; transition:all .2s ease; }
+        #timer.last-five { font-size:22px; font-weight:800; padding:8px 14px; border:2px solid #dc2626; animation:timerPulse 1s infinite; }
+        #timer.last-one { font-size:24px; font-weight:900; }
+        #timeWarning { display:none; margin-top:8px; font-weight:800; text-align:center; padding:8px; border-radius:8px; }
+        #timeWarning.show { display:block; }
+        .fullscreen-btn { float:right; }
+        .question img { max-width:100%; height:auto; cursor:zoom-in; }
+        .image-zoom-overlay { display:none; position:fixed; inset:0; z-index:99999; background:rgba(0,0,0,.88); align-items:center; justify-content:center; padding:20px; }
+        .image-zoom-overlay.show { display:flex; }
+        .image-zoom-overlay img { max-width:95vw; max-height:90vh; object-fit:contain; cursor:zoom-out; border-radius:8px; }
+        @keyframes timerPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.04); } }
+        @media(max-width:600px) { #timer.last-five { font-size:20px; } }
+    </style>
+
     <div class="card">
+
+        <button type="button"
+                class="btn gray fullscreen-btn"
+                id="fullscreenBtn"
+                onclick="toggleFullscreen()">
+            ⛶ Full Screen
+        </button>
 
         <button type="button"
                 class="btn gray"
@@ -5548,10 +5578,24 @@ def student_take(attempt_id):
             Hide / Show Navigation
         </button>
 
-        <span class="badge orange"
-              id="timer">
-            Loading...
-        </span>
+        <div class="exam-progress-wrap">
+            <div class="exam-progress-top">
+                <span>Exam Progress</span>
+                <span>{{ progress_number }} / {{ total_questions }}</span>
+            </div>
+            <div class="exam-progress-bar">
+                <div class="exam-progress-fill"></div>
+            </div>
+        </div>
+
+        <div style="text-align:center;margin-top:10px">
+            <span class="badge orange"
+                  id="timer">
+                Loading...
+            </span>
+        </div>
+
+        <div id="timeWarning"></div>
 
     </div>
 
@@ -5631,17 +5675,13 @@ def student_take(attempt_id):
                 </a>
                 {% endif %}
 
-                <form method="post"
-                      action="{{ url_for(
-                          'student_submit_exam',
-                          attempt_id=attempt.id
-                      ) }}"
-                      style="display:inline"
-                      onsubmit="return confirm('Submit exam?')">
-                    <button class="btn red">
-                        Submit Exam
-                    </button>
-                </form>
+                <a class="btn red"
+                   href="{{ url_for(
+                       'student_submit_summary',
+                       attempt_id=attempt.id
+                   ) }}">
+                    Submit Exam
+                </a>
 
             </div>
 
@@ -5689,8 +5729,15 @@ def student_take(attempt_id):
 
     </div>
 
+    <div class="image-zoom-overlay"
+         id="imageZoomOverlay"
+         onclick="closeImageZoom()">
+        <img id="imageZoomTarget" alt="Question image">
+    </div>
+
     <script>
     let remaining={{ remaining }};
+    let autoSubmitting=false;
 
     function updateTimer(){
 
@@ -5700,13 +5747,36 @@ def student_take(attempt_id):
         let m=Math.floor((sec%3600)/60);
         let s=sec%60;
 
-        document.getElementById('timer').innerText =
+        const timer=document.getElementById('timer');
+        const warning=document.getElementById('timeWarning');
+
+        timer.innerText =
             String(h).padStart(2,'0') + ':' +
             String(m).padStart(2,'0') + ':' +
             String(s).padStart(2,'0');
 
+        timer.classList.remove('last-five','last-one');
+
+        if(remaining<=300 && remaining>60){
+            timer.classList.add('last-five');
+            warning.className='show';
+            warning.innerText='⚠️ ONLY 5 MINUTES LEFT';
+        }else if(remaining<=60 && remaining>0){
+            timer.classList.add('last-five','last-one');
+            warning.className='show';
+            warning.innerText='⚠️ ONLY ' + remaining + ' SECONDS LEFT';
+        }else{
+            warning.className='';
+            warning.innerText='';
+        }
+
         if(remaining<=0){
-            document.getElementById('timer').innerText='TIME UP';
+            timer.innerText='TIME UP';
+            warning.className='show';
+            warning.innerText='⏰ TIME UP — SUBMITTING EXAM';
+
+            if(autoSubmitting){ return; }
+            autoSubmitting=true;
 
             fetch(
                 "{{ url_for(
@@ -5732,6 +5802,40 @@ def student_take(attempt_id):
 
     setInterval(updateTimer,1000);
     updateTimer();
+
+    function toggleFullscreen(){
+        const btn=document.getElementById('fullscreenBtn');
+        if(!document.fullscreenElement){
+            document.documentElement.requestFullscreen().then(function(){
+                btn.innerText='✕ Exit Full Screen';
+            }).catch(function(){});
+        }else{
+            document.exitFullscreen();
+        }
+    }
+
+    document.addEventListener('fullscreenchange',function(){
+        const btn=document.getElementById('fullscreenBtn');
+        if(btn){
+            btn.innerText=document.fullscreenElement ? '✕ Exit Full Screen' : '⛶ Full Screen';
+        }
+    });
+
+    function closeImageZoom(){
+        document.getElementById('imageZoomOverlay').classList.remove('show');
+    }
+
+    document.querySelectorAll('.question img').forEach(function(img){
+        img.addEventListener('click',function(event){
+            event.stopPropagation();
+            document.getElementById('imageZoomTarget').src=img.src;
+            document.getElementById('imageZoomOverlay').classList.add('show');
+        });
+    });
+
+    document.addEventListener('keydown',function(event){
+        if(event.key==='Escape'){ closeImageZoom(); }
+    });
 
     function toggleNav(){
 
@@ -5828,7 +5932,10 @@ def student_take(attempt_id):
         selected=selected,
         review=review,
         remaining=remaining,
-        answer_map=answer_map
+        answer_map=answer_map,
+        progress_number=progress_number,
+        total_questions=total_questions,
+        progress_percent=progress_percent
     )
 def answer_text(q, answer):
 
@@ -6040,6 +6147,79 @@ def student_save_answer(attempt_id):
 # ============================================================
 # SUBMIT EXAM
 # ============================================================
+
+@app.route("/student/exam/<int:attempt_id>/submit-summary")
+def student_submit_summary(attempt_id):
+
+    guard = student_required()
+    if guard:
+        return guard
+
+    sid = session["student_db_id"]
+    attempt = load_attempt(attempt_id, sid)
+
+    if not attempt:
+        flash("Attempt not found.")
+        return redirect(url_for("student_dashboard"))
+
+    if attempt["status"] == "Submitted":
+        return redirect(url_for("student_result_detail", attempt_id=attempt_id))
+
+    questions = attempt_questions(attempt)
+    answers = query_all("SELECT * FROM exam_answers WHERE attempt_id=?", (attempt_id,))
+    answer_map = {a["question_id"]: a for a in answers}
+
+    total_questions = len(questions)
+    answered = sum(1 for q in questions if answer_map.get(q["id"]) and answer_map[q["id"]]["selected_answer"])
+    review_count = sum(1 for q in questions if answer_map.get(q["id"]) and safe_int(answer_map[q["id"]]["marked_for_review"], 0) == 1)
+    unanswered = max(0, total_questions - answered)
+
+    body = """
+    <div class="card center">
+        <h1>Submit Exam</h1>
+        <div class="card">
+            <h2>Submission Summary</h2>
+            <p>Total Questions: <b>{{ total_questions }}</b></p>
+            <p>Answered: <b>{{ answered }}</b></p>
+            <p>Unanswered: <b>{{ unanswered }}</b></p>
+            <p>Marked for Review: <b>{{ review_count }}</b></p>
+        </div>
+
+        {% if unanswered > 0 %}
+        <div class="card" style="border:2px solid #f59e0b">
+            ⚠️ You still have <b>{{ unanswered }}</b> unanswered question(s).
+        </div>
+        {% endif %}
+
+        <p>Are you sure you want to submit the exam?<br><b>This action cannot be undone.</b></p>
+
+        <a class="btn gray"
+           href="{{ url_for('student_take', attempt_id=attempt.id) }}?q={{ attempt.current_index }}">
+            Cancel
+        </a>
+
+        <form method="post"
+              action="{{ url_for('student_submit_exam', attempt_id=attempt.id) }}"
+              style="display:inline">
+            <button class="btn red" type="submit"
+                    onclick="return confirm('Final submit? Your exam cannot be changed after submission.')">
+                ✓ FINAL SUBMIT
+            </button>
+        </form>
+    </div>
+    """
+
+    return page(
+        "Submit Exam",
+        body,
+        student=True,
+        attempt=attempt,
+        total_questions=total_questions,
+        answered=answered,
+        unanswered=unanswered,
+        review_count=review_count
+    )
+
 
 @app.route("/student/exam/<int:attempt_id>/submit",
            methods=["POST"])
