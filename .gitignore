@@ -1,0 +1,11 @@
+instance/
+__pycache__/
+*.pyc
+*.db
+*.zip
+app_backup_*.py
+app_before_*.py
+app_fixed*.py
+app_WORKING_FINAL.py
+
+static/uploads/
